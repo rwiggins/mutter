@@ -60,6 +60,7 @@ typedef void (*MetaWaylandDmaBufSourceDispatch) (MetaWaylandBuffer *buffer,
 
 GSource *
 meta_wayland_dma_buf_create_source (MetaWaylandBuffer               *buffer,
+                                    MetaWaylandSurface              *surface,
                                     MetaWaylandDmaBufSourceDispatch  dispatch,
                                     gpointer                         user_data);
 

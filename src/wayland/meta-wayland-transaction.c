@@ -316,7 +316,8 @@ meta_wayland_transaction_dma_buf_dispatch (MetaWaylandBuffer *buffer,
 
 static gboolean
 meta_wayland_transaction_add_dma_buf_source (MetaWaylandTransaction *transaction,
-                                             MetaWaylandBuffer      *buffer)
+                                             MetaWaylandBuffer      *buffer,
+                                             MetaWaylandSurface     *surface)
 {
   GSource *source;
 
@@ -325,6 +326,7 @@ meta_wayland_transaction_add_dma_buf_source (MetaWaylandTransaction *transaction
     return FALSE;
 
   source = meta_wayland_dma_buf_create_source (buffer,
+                                               surface,
                                                meta_wayland_transaction_dma_buf_dispatch,
                                                transaction);
   if (!source)
@@ -383,7 +385,7 @@ meta_wayland_transaction_commit (MetaWaylandTransaction *transaction)
           MetaWaylandBuffer *buffer = entry->state->buffer;
 
           if (buffer &&
-              meta_wayland_transaction_add_dma_buf_source (transaction, buffer))
+              meta_wayland_transaction_add_dma_buf_source (transaction, buffer, surface))
             maybe_apply = FALSE;
 
           if (entry->state->subsurface_placement_ops)

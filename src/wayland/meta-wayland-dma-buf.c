@@ -843,6 +843,7 @@ typedef struct _MetaWaylandDmaBufSource
 
   MetaWaylandDmaBufSourceDispatch dispatch;
   MetaWaylandBuffer *buffer;
+  MetaWaylandSurface *surface;
   gpointer user_data;
 
   gpointer fd_tags[META_WAYLAND_DMA_BUF_MAX_FDS];
@@ -944,6 +945,7 @@ static GSourceFuncs meta_wayland_dma_buf_source_funcs = {
  */
 GSource *
 meta_wayland_dma_buf_create_source (MetaWaylandBuffer               *buffer,
+                                    MetaWaylandSurface              *surface,
                                     MetaWaylandDmaBufSourceDispatch  dispatch,
                                     gpointer                         user_data)
 {
@@ -972,6 +974,7 @@ meta_wayland_dma_buf_create_source (MetaWaylandBuffer               *buffer,
                                                       sizeof (*source));
           source->buffer = g_object_ref (buffer);
           source->dispatch = dispatch;
+          source->surface = surface;
           source->user_data = user_data;
         }
 
