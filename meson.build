@@ -324,6 +324,8 @@ if have_introspection
   ]
 endif
 
+have_eventfd = cc.has_header('sys/eventfd.h')
+
 have_documentation = get_option('docs')
 if have_documentation
   gidocgen_dep = dependency('gi-docgen', version: '>= 2021.1',
@@ -543,6 +545,7 @@ cdata.set('HAVE_STARTUP_NOTIFICATION', have_startup_notification)
 cdata.set('HAVE_INTROSPECTION', have_introspection)
 cdata.set('HAVE_PROFILER', have_profiler)
 cdata.set('HAVE_LIBDISPLAY_INFO', have_libdisplay_info)
+cdata.set('HAVE_EVENTFD', have_eventfd)
 
 if have_x11_client
   xkb_base = xkeyboard_config_dep.get_variable('xkb_base')
