@@ -1080,6 +1080,7 @@ if have_wayland
     ['xdg-output', 'unstable', 'v1', ],
     ['xdg-shell', 'stable', ],
     ['xwayland-keyboard-grab', 'unstable', 'v1', ],
+    ['linux-drm-syncobj', 'staging', 'v1'],
   ]
   if have_wayland_eglstream
     wayland_eglstream_protocols_dir = wayland_eglstream_protocols_dep.get_variable('pkgdatadir')
