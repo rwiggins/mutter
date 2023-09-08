@@ -40,6 +40,12 @@ G_DECLARE_FINAL_TYPE (MetaWaylandSurfaceState,
                       META, WAYLAND_SURFACE_STATE,
                       GObject)
 
+#define META_TYPE_WAYLAND_SYNC_POINT (meta_wayland_sync_point_get_type ())
+G_DECLARE_FINAL_TYPE (MetaWaylandSyncPoint,
+                      meta_wayland_sync_point,
+                      META, WAYLAND_SYNC_POINT,
+                      GObject)
+
 struct _MetaWaylandSurfaceRoleClass
 {
   GObjectClass parent_class;
@@ -66,6 +72,13 @@ struct _MetaWaylandSurfaceRoleClass
                                     float                  *out_sy);
   MetaWindow * (*get_window) (MetaWaylandSurfaceRole *surface_role);
 };
+
+typedef struct _MetaWaylandSyncPoint {
+  GObject parent;
+
+  MetaWaylandSyncobjTimeline *timeline;
+  uint64_t sync_point;
+} MetaWaylandSyncPoint;
 
 struct _MetaWaylandSurfaceState
 {
@@ -128,6 +141,12 @@ struct _MetaWaylandSurfaceState
   /* xdg_popup */
   MetaWaylandXdgPositioner *xdg_positioner;
   uint32_t xdg_popup_reposition_token;
+
+  /* Explicit Synchronization */
+  struct {
+    MetaWaylandSyncPoint *acquire;
+    MetaWaylandSyncPoint *release;
+  } drm_syncobj;
 };
 
 struct _MetaWaylandDragDestFuncs

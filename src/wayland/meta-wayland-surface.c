@@ -99,6 +99,8 @@ G_DEFINE_TYPE (MetaWaylandSurfaceState,
                meta_wayland_surface_state,
                G_TYPE_OBJECT)
 
+G_DEFINE_TYPE (MetaWaylandSyncPoint, meta_wayland_sync_point, G_TYPE_OBJECT);
+
 enum
 {
   SURFACE_DESTROY,
@@ -417,6 +419,9 @@ meta_wayland_surface_state_set_default (MetaWaylandSurfaceState *state)
   wl_list_init (&state->presentation_feedback_list);
 
   state->xdg_popup_reposition_token = 0;
+
+  state->drm_syncobj.acquire = g_object_new (META_TYPE_WAYLAND_SYNC_POINT, NULL);
+  state->drm_syncobj.release = g_object_new (META_TYPE_WAYLAND_SYNC_POINT, NULL);
 }
 
 static void
@@ -443,6 +448,8 @@ meta_wayland_surface_state_clear (MetaWaylandSurfaceState *state)
   g_clear_pointer (&state->input_region, mtk_region_unref);
   g_clear_pointer (&state->opaque_region, mtk_region_unref);
   g_clear_pointer (&state->xdg_positioner, g_free);
+  g_clear_object (&state->drm_syncobj.acquire);
+  g_clear_object (&state->drm_syncobj.release);
 
   if (state->buffer_destroy_handler_id)
     {
@@ -601,6 +608,20 @@ meta_wayland_surface_state_merge_into (MetaWaylandSurfaceState *from,
       to->xdg_positioner = g_steal_pointer (&from->xdg_positioner);
       to->xdg_popup_reposition_token = from->xdg_popup_reposition_token;
     }
+
+  if (from->drm_syncobj.acquire)
+    {
+      g_object_unref (to->drm_syncobj.acquire);
+      to->drm_syncobj.acquire = from->drm_syncobj.acquire;
+      g_clear_object (&from->drm_syncobj.acquire);
+    }
+
+  if (from->drm_syncobj.release)
+    {
+      g_object_unref (to->drm_syncobj.release);
+      to->drm_syncobj.release = from->drm_syncobj.release;
+      g_clear_object (&from->drm_syncobj.release);
+    }
 }
 
 static void
@@ -634,6 +655,30 @@ meta_wayland_surface_state_class_init (MetaWaylandSurfaceStateClass *klass)
                   NULL, NULL, NULL,
                   G_TYPE_NONE, 0);
 }
+
+static void
+meta_wayland_sync_point_finalize (GObject *object)
+{
+  MetaWaylandSyncPoint *sync = META_WAYLAND_SYNC_POINT (object);
+
+  g_object_unref (sync->timeline);
+
+  G_OBJECT_CLASS (meta_wayland_sync_point_parent_class)->finalize (object);
+}
+
+static void
+meta_wayland_sync_point_init (MetaWaylandSyncPoint *sync)
+{
+}
+
+static void
+meta_wayland_sync_point_class_init (MetaWaylandSyncPointClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  object_class->finalize = meta_wayland_sync_point_finalize;
+}
+
 
 static void
 meta_wayland_surface_discard_presentation_feedback (MetaWaylandSurface *surface)
@@ -914,6 +959,7 @@ meta_wayland_surface_commit (MetaWaylandSurface *surface)
   MetaWaylandBuffer *buffer = pending->buffer;
   MetaWaylandTransaction *transaction;
   MetaWaylandSurface *subsurface_surface;
+  MetaWaylandSyncPoint *release_point;
 
   COGL_TRACE_BEGIN_SCOPED (MetaWaylandSurfaceCommit,
                            "WaylandSurface (commit)");
@@ -942,6 +988,9 @@ meta_wayland_surface_commit (MetaWaylandSurface *surface)
         }
 
       pending->texture = g_object_ref (surface->protocol_state.texture);
+
+      release_point = g_object_ref (surface->pending_state->drm_syncobj.release);
+      g_array_append_val (buffer->release_points, release_point);
 
       g_object_ref (buffer);
       meta_wayland_buffer_inc_use_count (buffer);

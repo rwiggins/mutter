@@ -56,6 +56,8 @@
 #include "meta/util.h"
 #include "wayland/meta-wayland-dma-buf.h"
 #include "wayland/meta-wayland-private.h"
+#include "wayland/meta-drm-timeline.h"
+#include "wayland/meta-wayland-linux-drm-syncobj.h"
 
 #ifdef HAVE_NATIVE_BACKEND
 #include "backends/native/meta-drm-buffer-gbm.h"
@@ -658,12 +660,36 @@ meta_wayland_buffer_inc_use_count (MetaWaylandBuffer *buffer)
 void
 meta_wayland_buffer_dec_use_count (MetaWaylandBuffer *buffer)
 {
+  MetaContext *context = meta_wayland_compositor_get_context (buffer->compositor);
+  MetaBackend *backend = meta_context_get_backend (context);
+  ClutterBackend *clutter_backend = meta_backend_get_clutter_backend (backend);
+  CoglContext *cogl_context = clutter_backend_get_cogl_context (clutter_backend);
+  MetaWaylandSyncPoint *sync_point;
+  GError *error = NULL;
+  int sync_fd;
+
   g_return_if_fail (buffer->use_count > 0);
 
   buffer->use_count--;
 
   if (buffer->use_count == 0 && buffer->resource)
-    wl_buffer_send_release (buffer->resource);
+    {
+      wl_buffer_send_release (buffer->resource);
+
+      sync_fd = cogl_context_get_latest_sync_fd (cogl_context);
+      g_return_if_fail (sync_fd < 0);
+      for (int i = 0; i < buffer->release_points->len; i++)
+        {
+          sync_point = g_array_index (buffer->release_points, MetaWaylandSyncPoint *, i);
+          meta_drm_timeline_set_sync_point (sync_point->timeline->drm_timeline,
+              sync_point->sync_point, sync_fd, &error);
+          if (error)
+            {
+              g_warning ("Failed to import sync point: %s", error ? error->message : "Unknown error");
+              g_clear_pointer (&error, g_free);
+            }
+        }
+    }
 }
 
 gboolean
@@ -872,6 +898,7 @@ meta_wayland_buffer_finalize (GObject *object)
 
   clear_tainted_scanout_onscreens (buffer);
   g_clear_pointer (&buffer->tainted_scanout_onscreens, g_hash_table_unref);
+  g_clear_pointer (&buffer->release_points, g_array_unref);
 
   g_clear_object (&buffer->egl_image.texture);
 #ifdef HAVE_WAYLAND_EGLSTREAM
@@ -890,6 +917,8 @@ meta_wayland_buffer_finalize (GObject *object)
 static void
 meta_wayland_buffer_init (MetaWaylandBuffer *buffer)
 {
+  buffer->release_points = g_array_new (FALSE, FALSE, sizeof (MetaWaylandSyncPoint *));
+  g_array_set_clear_func (buffer->release_points, (GDestroyNotify) g_object_unref);
 }
 
 static void
