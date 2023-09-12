@@ -31,6 +31,8 @@
 #include "meta/meta-multi-texture.h"
 #include "wayland/meta-wayland-types.h"
 
+#define META_WAYLAND_DMA_BUF_MAX_FDS 4
+
 #define META_TYPE_WAYLAND_DMA_BUF_BUFFER (meta_wayland_dma_buf_buffer_get_type ())
 G_DECLARE_FINAL_TYPE (MetaWaylandDmaBufBuffer, meta_wayland_dma_buf_buffer,
                       META, WAYLAND_DMA_BUF_BUFFER, GObject);
@@ -39,7 +41,21 @@ G_DECLARE_FINAL_TYPE (MetaWaylandDmaBufBuffer, meta_wayland_dma_buf_buffer,
 G_DECLARE_FINAL_TYPE (MetaWaylandDmaBufManager, meta_wayland_dma_buf_manager,
                       META, WAYLAND_DMA_BUF_MANAGER, GObject)
 
-typedef struct _MetaWaylandDmaBufBuffer MetaWaylandDmaBufBuffer;
+typedef struct _MetaWaylandDmaBufBuffer
+{
+  GObject parent;
+
+  MetaWaylandDmaBufManager *manager;
+
+  int width;
+  int height;
+  uint32_t drm_format;
+  uint64_t drm_modifier;
+  bool is_y_inverted;
+  int fds[META_WAYLAND_DMA_BUF_MAX_FDS];
+  uint32_t offsets[META_WAYLAND_DMA_BUF_MAX_FDS];
+  uint32_t strides[META_WAYLAND_DMA_BUF_MAX_FDS];
+} MetaWaylandDmaBufBuffer;
 
 MetaWaylandDmaBufManager * meta_wayland_dma_buf_manager_new (MetaWaylandCompositor  *compositor,
                                                              GError                **error);
@@ -54,15 +70,6 @@ meta_wayland_dma_buf_fds_for_wayland_buffer (MetaWaylandBuffer *buffer);
 
 MetaWaylandDmaBufBuffer *
 meta_wayland_dma_buf_from_buffer (MetaWaylandBuffer *buffer);
-
-typedef void (*MetaWaylandDmaBufSourceDispatch) (MetaWaylandBuffer *buffer,
-                                                 gpointer           user_data);
-
-GSource *
-meta_wayland_dma_buf_create_source (MetaWaylandBuffer               *buffer,
-                                    MetaWaylandSurface              *surface,
-                                    MetaWaylandDmaBufSourceDispatch  dispatch,
-                                    gpointer                         user_data);
 
 CoglScanout *
 meta_wayland_dma_buf_try_acquire_scanout (MetaWaylandDmaBufBuffer *dma_buf,

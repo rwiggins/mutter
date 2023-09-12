@@ -49,14 +49,4 @@ typedef struct _MetaWaylandSyncobjTimeline
   MetaDrmTimeline *drm_timeline;
 } MetaWaylandSyncobjTimeline;
 
-typedef void (*MetaWaylandDrmSyncobjSourceDispatch) (MetaWaylandSurface *surface,
-                                                     gpointer            user_data);
-
 void meta_wayland_drm_syncobj_init (MetaWaylandCompositor *compositor);
-
-GSource *
-meta_wayland_drm_syncobj_create_source (MetaWaylandSurface                    *surface,
-                                        MetaWaylandSyncobjTimeline               *timeline,
-                                        uint64_t                               sync_point,
-                                        MetaWaylandDrmSyncobjSourceDispatch  dispatch,
-                                        gpointer                               user_data);

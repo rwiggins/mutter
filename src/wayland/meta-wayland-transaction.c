@@ -26,8 +26,15 @@
 #include "wayland/meta-wayland.h"
 #include "wayland/meta-wayland-buffer.h"
 #include "wayland/meta-wayland-dma-buf.h"
+#include "wayland/meta-wayland-linux-drm-syncobj.h"
 
 #define META_WAYLAND_TRANSACTION_NONE ((void *)(uintptr_t) G_MAXSIZE)
+
+typedef enum _MetaDrmSourceType
+{
+  DMA_BUF_SOURCE,
+  DRM_SYNCOBJ_SOURCE,
+} MetaDrmSourceType;
 
 struct _MetaWaylandTransaction
 {
@@ -57,6 +64,131 @@ struct _MetaWaylandTransactionEntry
   gboolean has_sub_pos;
   int x;
   int y;
+};
+
+typedef struct _MetaWaylandDrmSource
+{
+  GSource base;
+
+  MetaDrmSourceType type;
+  MetaWaylandDrmSourceDispatch dispatch;
+  MetaWaylandBuffer *buffer;
+  MetaWaylandSurface *surface;
+  gpointer user_data;
+
+  /* -- dmabuf source fields -- */
+  gpointer fd_tags[META_WAYLAND_DMA_BUF_MAX_FDS];
+
+  /* -- explicit sync fields -- */
+  int sync_fd;
+  gpointer sync_fd_tag;
+} MetaWaylandDrmSource;
+
+static gboolean
+meta_wayland_drm_fd_readable (int fd)
+{
+  GPollFD poll_fd;
+
+  poll_fd.fd = fd;
+  poll_fd.events = G_IO_IN;
+  poll_fd.revents = 0;
+
+  if (!g_poll (&poll_fd, 1, 0))
+    return FALSE;
+
+  return (poll_fd.revents & (G_IO_IN | G_IO_NVAL)) != 0;
+}
+
+static gboolean
+meta_wayland_drm_source_dispatch (GSource     *base,
+                                      GSourceFunc  callback,
+                                      gpointer     user_data)
+{
+  MetaWaylandDrmSource *source;
+  MetaWaylandDmaBufBuffer *dma_buf;
+  gboolean ready;
+  uint32_t i;
+
+  source = (MetaWaylandDrmSource *) base;
+
+  if (source->type == DMA_BUF_SOURCE)
+    {
+      dma_buf = source->buffer->dma_buf.dma_buf;
+      ready = TRUE;
+
+      for (i = 0; i < META_WAYLAND_DMA_BUF_MAX_FDS; i++)
+        {
+          gpointer fd_tag = source->fd_tags[i];
+
+          if (!fd_tag)
+            continue;
+
+          if (!meta_wayland_drm_fd_readable (dma_buf->fds[i]))
+            {
+              ready = FALSE;
+              continue;
+            }
+
+          g_source_remove_unix_fd (&source->base, fd_tag);
+          source->fd_tags[i] = NULL;
+        }
+
+      if (!ready)
+        return G_SOURCE_CONTINUE;
+    }
+
+  if (source->type == DRM_SYNCOBJ_SOURCE)
+    {
+      if (!source->sync_fd_tag)
+        return G_SOURCE_CONTINUE;
+
+      if (!meta_wayland_drm_fd_readable (source->sync_fd))
+        {
+          return G_SOURCE_CONTINUE;
+        }
+
+      g_source_remove_unix_fd (&source->base, source->sync_fd_tag);
+      close (source->sync_fd);
+      source->sync_fd_tag = NULL;
+    }
+
+  source->dispatch (source->buffer, source->user_data);
+
+  return G_SOURCE_REMOVE;
+}
+
+static void
+meta_wayland_drm_source_finalize (GSource *base)
+{
+  MetaWaylandDrmSource *source;
+  uint32_t i;
+
+  source = (MetaWaylandDrmSource *) base;
+
+  for (i = 0; i < META_WAYLAND_DMA_BUF_MAX_FDS; i++)
+    {
+      gpointer fd_tag = source->fd_tags[i];
+
+      if (fd_tag)
+        {
+          g_source_remove_unix_fd (&source->base, fd_tag);
+          source->fd_tags[i] = NULL;
+        }
+    }
+
+  if (source->sync_fd_tag)
+    {
+      g_source_remove_unix_fd (&source->base, source->sync_fd_tag);
+      close (source->sync_fd);
+      source->sync_fd_tag = NULL;
+    }
+
+  g_clear_object (&source->buffer);
+}
+
+static GSourceFuncs meta_wayland_drm_source_funcs = {
+  .dispatch = meta_wayland_drm_source_dispatch,
+  .finalize = meta_wayland_drm_source_finalize
 };
 
 static MetaWaylandTransactionEntry *
@@ -302,8 +434,8 @@ meta_wayland_transaction_maybe_apply (MetaWaylandTransaction *transaction)
 }
 
 static void
-meta_wayland_transaction_dma_buf_dispatch (MetaWaylandBuffer *buffer,
-                                           gpointer           user_data)
+meta_wayland_transaction_drm_dispatch (MetaWaylandBuffer *buffer,
+                                       gpointer           user_data)
 {
   MetaWaylandTransaction *transaction = user_data;
 
@@ -313,6 +445,100 @@ meta_wayland_transaction_dma_buf_dispatch (MetaWaylandBuffer *buffer,
 
   meta_wayland_transaction_maybe_apply (transaction);
 }
+
+static GSource *
+meta_wayland_dma_buf_create_source (MetaWaylandBuffer               *buffer,
+                                    MetaWaylandSurface              *surface,
+                                    MetaWaylandDrmSourceDispatch     dispatch,
+                                    gpointer                         user_data)
+{
+  MetaWaylandDmaBufBuffer *dma_buf;
+  MetaWaylandDrmSource *source = NULL;
+  uint32_t i;
+
+  dma_buf = buffer->dma_buf.dma_buf;
+  if (!dma_buf)
+    return NULL;
+
+  for (i = 0; i < META_WAYLAND_DMA_BUF_MAX_FDS; i++)
+    {
+      int fd = dma_buf->fds[i];
+
+      if (fd < 0)
+        break;
+
+      if (meta_wayland_drm_fd_readable (fd))
+        continue;
+
+      if (!source)
+        {
+          source =
+            (MetaWaylandDrmSource *) g_source_new (&meta_wayland_drm_source_funcs,
+                                                      sizeof (*source));
+          source->buffer = g_object_ref (buffer);
+          source->type = DMA_BUF_SOURCE;
+          source->dispatch = dispatch;
+          source->surface = surface;
+          source->user_data = user_data;
+        }
+
+      source->fd_tags[i] = g_source_add_unix_fd (&source->base, fd, G_IO_IN);
+    }
+
+  if (!source)
+    return NULL;
+
+  return &source->base;
+}
+
+static GSource *
+meta_wayland_drm_syncobj_create_source (MetaWaylandBuffer                     *buffer,
+                                        MetaWaylandSurface                    *surface,
+                                        MetaWaylandSyncobjTimeline            *timeline,
+                                        uint64_t                               sync_point,
+                                        MetaWaylandDrmSourceDispatch           dispatch,
+                                        gpointer                               user_data)
+{
+  MetaWaylandDrmSource *source = NULL;
+  int sync_fd;
+  GError *error = NULL;
+
+  if (!timeline)
+    return NULL;
+
+  sync_fd = meta_drm_timeline_get_eventfd (timeline->drm_timeline, sync_point, &error);
+  if (sync_fd < 0)
+    {
+      g_warning ("Failed to get sync fd: %s", error ? error->message : "Unknown error");
+      return NULL;
+    }
+
+  if (meta_wayland_drm_fd_readable (sync_fd))
+    {
+      close(sync_fd);
+      return NULL;
+    }
+
+  source =
+    (MetaWaylandDrmSource *) g_source_new (&meta_wayland_drm_source_funcs,
+                                       sizeof (*source));
+  if (!source)
+    {
+      close(sync_fd);
+      return NULL;
+    }
+
+  source->buffer = g_object_ref (buffer);
+  source->surface = surface;
+  source->type = DRM_SYNCOBJ_SOURCE;
+  source->dispatch = dispatch;
+  source->user_data = user_data;
+  source->sync_fd = sync_fd;
+  source->sync_fd_tag = g_source_add_unix_fd (&source->base, sync_fd, G_IO_IN);
+
+  return &source->base;
+}
+
 
 static gboolean
 meta_wayland_transaction_add_dma_buf_source (MetaWaylandTransaction *transaction,
@@ -327,7 +553,7 @@ meta_wayland_transaction_add_dma_buf_source (MetaWaylandTransaction *transaction
 
   source = meta_wayland_dma_buf_create_source (buffer,
                                                surface,
-                                               meta_wayland_transaction_dma_buf_dispatch,
+                                               meta_wayland_transaction_drm_dispatch,
                                                transaction);
   if (!source)
     return FALSE;
@@ -340,6 +566,46 @@ meta_wayland_transaction_add_dma_buf_source (MetaWaylandTransaction *transaction
     }
 
   g_hash_table_insert (transaction->buf_sources, buffer, source);
+  g_source_attach (source, NULL);
+  g_source_unref (source);
+
+  return TRUE;
+}
+
+static gboolean
+meta_wayland_transaction_add_drm_syncobj_source (MetaWaylandTransaction *transaction,
+                                                 MetaWaylandBuffer      *buffer,
+                                                 MetaWaylandSurface     *surface)
+{
+  GSource *source;
+  MetaWaylandTransactionEntry *entry;
+
+  if (transaction->buf_sources &&
+      g_hash_table_contains (transaction->buf_sources, surface))
+    return FALSE;
+
+  entry = meta_wayland_transaction_get_entry (transaction, surface);
+  if (!entry)
+    return FALSE;
+
+  source =
+    meta_wayland_drm_syncobj_create_source (buffer,
+                                            surface,
+                                            entry->state->drm_syncobj.acquire->timeline,
+                                            entry->state->drm_syncobj.acquire->sync_point,
+                                            meta_wayland_transaction_drm_dispatch,
+                                            transaction);
+  if (!source)
+    return FALSE;
+
+  if (!transaction->buf_sources)
+    {
+      transaction->buf_sources =
+        g_hash_table_new_full (NULL, NULL, NULL,
+                               (GDestroyNotify) g_source_destroy);
+    }
+
+  g_hash_table_insert (transaction->buf_sources, surface, source);
   g_source_attach (source, NULL);
   g_source_unref (source);
 
@@ -384,8 +650,10 @@ meta_wayland_transaction_commit (MetaWaylandTransaction *transaction)
         {
           MetaWaylandBuffer *buffer = entry->state->buffer;
 
-          if (buffer &&
-              meta_wayland_transaction_add_dma_buf_source (transaction, buffer, surface))
+          if ((entry->state->drm_syncobj.acquire &&
+               meta_wayland_transaction_add_drm_syncobj_source (transaction, buffer, surface))
+               || (buffer &&
+                   meta_wayland_transaction_add_dma_buf_source (transaction, buffer, surface)))
             maybe_apply = FALSE;
 
           if (entry->state->subsurface_placement_ops)
