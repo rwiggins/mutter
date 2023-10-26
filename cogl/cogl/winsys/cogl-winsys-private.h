@@ -144,6 +144,9 @@ typedef struct _CoglWinsysVtable
   (*fence_destroy) (CoglContext *ctx,
                     void        *fence);
 
+  int
+  (*get_sync_fd) (CoglContext *ctx);
+
 } CoglWinsysVtable;
 
 typedef const CoglWinsysVtable *(*CoglWinsysVtableGetter) (void);

@@ -257,6 +257,9 @@ struct _CoglContext
   CoglPollSource *fences_poll_source;
   CoglList fences;
 
+  /* fd representing the last submitted GPU work */
+  int sync_fd;
+
   GHashTable *named_pipelines;
 
   /* This defines a list of function pointers that Cogl uses from
@@ -311,3 +314,6 @@ _cogl_context_set_current_projection_entry (CoglContext *context,
 void
 _cogl_context_set_current_modelview_entry (CoglContext *context,
                                            CoglMatrixEntry *entry);
+
+void
+_cogl_context_update_sync_fd (CoglContext *context);

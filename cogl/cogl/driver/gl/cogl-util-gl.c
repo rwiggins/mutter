@@ -519,6 +519,9 @@ cogl_gl_create_timestamp_query (CoglContext *context)
   GE (context, glGenQueries (1, &query->id));
   GE (context, glQueryCounter (query->id, GL_TIMESTAMP));
 
+  /* Update our "latest" sync fd to contain all previous work */
+  _cogl_context_update_sync_fd (context);
+
   /* Flush right away so GL knows about our timestamp query.
    *
    * E.g. the direct scanout path doesn't call SwapBuffers or any other

@@ -614,6 +614,25 @@ _cogl_winsys_fence_destroy (CoglContext *context, void *fence)
 
   renderer->pf_eglDestroySync (renderer->edpy, fence);
 }
+
+static int
+_cogl_winsys_get_sync_fd (CoglContext *context)
+{
+  CoglRendererEGL *renderer = context->display->renderer->winsys;
+  EGLSyncKHR sync;
+  int fd;
+
+  sync = renderer->pf_eglCreateSync (renderer->edpy, EGL_SYNC_NATIVE_FENCE_ANDROID, NULL);
+  if (sync == EGL_NO_SYNC_KHR)
+    return -1;
+
+  fd = renderer->pf_eglDupNativeFenceFD (renderer->edpy, sync);
+  renderer->pf_eglDestroySync (renderer->edpy, sync);
+  if (fd == EGL_NO_NATIVE_FENCE_FD_ANDROID)
+    return -1;
+
+  return fd;
+}
 #endif
 
 static CoglWinsysVtable _cogl_winsys_vtable =
@@ -636,6 +655,7 @@ static CoglWinsysVtable _cogl_winsys_vtable =
     .fence_add = _cogl_winsys_fence_add,
     .fence_is_complete = _cogl_winsys_fence_is_complete,
     .fence_destroy = _cogl_winsys_fence_destroy,
+    .get_sync_fd = _cogl_winsys_get_sync_fd,
 #endif
   };
 

@@ -1699,6 +1699,9 @@ cogl_framebuffer_flush (CoglFramebuffer *framebuffer)
   CoglFramebufferPrivate *priv =
     cogl_framebuffer_get_instance_private (framebuffer);
 
+  /* Update our "latest" sync fd to contain all previous work */
+  _cogl_context_update_sync_fd (priv->context);
+
   _cogl_framebuffer_flush_journal (framebuffer);
 
   cogl_framebuffer_driver_flush (priv->driver);
